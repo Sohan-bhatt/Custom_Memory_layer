@@ -13,11 +13,11 @@ A personal AI memory system inspired by Letta/Zep/Mem0 that manages multiple mem
 ┌─────────────────────────────────────────────────────────────┐
 │                      FRONTEND (React)                        │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
-│  │ Graph View  │  │ Memory Panel│  │ Timeline/History    │  │
+│  │ Graph View  │  │ Chat Panel  │  │ Memory Details      │  │
 │  └─────────────┘  └─────────────┘  └─────────────────────┘  │
 └─────────────────────────────────────────────────────────────┘
                               │
-                         WebSocket + REST
+                         REST API
                               │
 ┌─────────────────────────────────────────────────────────────┐
 │                    BACKEND (FastAPI)                         │
@@ -30,16 +30,13 @@ A personal AI memory system inspired by Letta/Zep/Mem0 that manages multiple mem
 │  └─────────────────────────────────────────────────────┘    │
 │  ┌──────────────────┐  ┌─────────────────────────────────┐  │
 │  │  Knowledge Graph │  │     Context Graph               │  │
-│  │  (NetworkX)      │  │     (Conversation State)        │  │
+│  │  (NetworkX)      │  │     (Conversation Links)        │  │
 │  └──────────────────┘  └─────────────────────────────────┘  │
-│  ┌──────────────────────────────────────────────────────┐   │
-│  │           Vector Store (FAISS/In-Memory)            │   │
-│  └──────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
                               │
 ┌─────────────────────────────────────────────────────────────┐
 │                    STORAGE (SQLite)                          │
-│  - memories.db (all memory layers)                         │
+│  - memory_graph.db                                        │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -48,7 +45,7 @@ A personal AI memory system inspired by Letta/Zep/Mem0 that manages multiple mem
 ### 3.1 Working Memory (Short-term)
 - **Purpose**: Current conversation context
 - **Capacity**: Last N messages (configurable, default: 10)
-- **Storage**: In-memory deque
+- **Storage**: In-memory deque + SQLite
 - **TTL**: Cleared after conversation ends or timeout
 
 ### 3.2 Buffer Memory
@@ -59,127 +56,135 @@ A personal AI memory system inspired by Letta/Zep/Mem0 that manages multiple mem
 
 ### 3.3 Episodic Memory
 - **Purpose**: Past conversations, events
-- **Storage**: SQLite + Vector index
-- **Retrieval**: Hybrid (keyword + semantic similarity)
-- **Metadata**: timestamps, session_id, sentiment
+- **Storage**: SQLite + In-memory vector index
+- **Retrieval**: Semantic similarity search
+- **Metadata**: timestamps, session_id
 
 ### 3.4 Semantic Memory
 - **Purpose**: Facts, preferences, knowledge about user/world
 - **Storage**: Knowledge Graph (NetworkX) + SQLite
 - **Structure**: Entities with attributes and relations
-- **Operations**: Merge, update, infer
+- **Operations**: Add entities, create relationships
 
 ### 3.5 Procedural Memory
-- **Purpose**: Learned patterns, behaviors, embeddings
-- **Storage**: Vector store + SQLite
-- **Content**: Embeddings of patterns, routines
+- **Purpose**: Learned patterns, behaviors
+- **Storage**: In-memory vector store + SQLite
+- **Content**: Embeddings of patterns
 
 ## 4. Graph Systems
 
 ### 4.1 Knowledge Graph
 ```
-Nodes: Entity (person, place, concept, preference)
+Nodes: Entity
   - id: UUID
-  - type: str (person|place|concept|preference|preference_category)
   - name: str
-  - properties: dict
+  - entity_type: str (person|place|concept|preference|company|skill)
+  - properties: dict (includes source_message, why)
   - created_at: datetime
   - updated_at: datetime
 
 Edges: Relationship
   - source_id: UUID
   - target_id: UUID
-  - relation_type: str (knows, likes, located_at, part_of, etc.)
-  - properties: dict
+  - relation_type: str (knows, likes, lives_in, works_at, uses, related_to)
+  - properties: dict (includes why, source_message, confidence)
   - confidence: float (0-1)
   - created_at: datetime
 ```
 
 ### 4.2 Context Graph
-```
-Nodes: ConversationElement
-  - id: UUID
-  - type: (message|entity|intent|topic)
-  - content: str
-  - metadata: dict
-
-Edges: ContextLink
-  - source_id: UUID
-  - target_id: UUID
-  - link_type: (refers_to|related_to|causes|implies)
-  - strength: float (0-1)
-```
+- **Purpose**: Shows conversational relationships between entities
+- **Nodes**: Same entities as Knowledge Graph
+- **Edges**: Conversational links (e.g., `conversational_likes`, `conversational_works_at`)
+- **Context**: Each node stores the message context where it was mentioned
 
 ### 4.3 Decision Logic
-- **Entity-rich input** → Parse entities → Store in Knowledge/Context Graph
-- **Messy/natural input** → Embed → Store in Vector DB (Episodic)
-- **Hybrid**: Store in both if content has both structured and unstructured elements
+- **Entity extraction**: AI Agent extracts entities from user messages
+- **Relationship building**: Agent proposes relationships, validates against existing ones
+- **Storage**: If no clear relationship → store in Episodic Memory (vector DB)
 
-## 5. API Endpoints
+## 5. AI Agents
+
+### Agent 1: Entity Extraction
+- Extracts ONLY entities from user messages
+- No relationships at this stage
+- Types: person, place, concept, preference, company, skill
+
+### Agent 2: Relationship Proposer
+- Checks existing entities and relations
+- Proposes NEW relationships only
+- Validates against existing knowledge
+
+### Agent 3: Entity Explainer (LLM)
+- When user clicks "Explain with AI" on a node
+- Queries LLM to explain what the entity means in the graph
+- Shows neighbors and relationships
+
+## 6. API Endpoints
 
 ### Memory Operations
 ```
 POST /memory/add              - Add new memory
-GET  /memory/retrieve         - Retrieve by query (hybrid)
-GET  /memory/search           - Semantic search
-POST /memory/delete           - Delete memory
-GET  /memory/list             - List all memories
+GET  /memory/working         - Get working memory
+POST /memory/chat           - Chat with AI (with memory)
+POST /memory/working/clear   - Clear working memory
+DELETE /memory/reset        - Reset entire database
 ```
 
 ### Graph Operations
 ```
-GET  /graph/knowledge         - Get knowledge graph
-GET  /graph/context          - Get context graph
-POST /graph/entity            - Add entity
-POST /graph/relation          - Add relation
-GET  /graph/entity/{id}       - Get entity details
-DELETE /graph/entity/{id}     - Delete entity
+GET  /graph/visualize       - Get all graph data for visualization
+GET  /graph/knowledge       - Get knowledge graph
+POST /graph/entity          - Add entity
+GET  /graph/entity/{id}    - Get entity details
+DELETE /graph/entity/{id}  - Delete entity
+POST /graph/relation       - Add relationship
+GET  /graph/entity/{id}/explain - Explain entity using AI
 ```
 
-### Visualization
-```
-GET  /graph/visualize         - Get graph data for visualization
-WS   /ws/graph-updates        - Real-time graph updates
-```
-
-## 6. Frontend Visualization
+## 7. Frontend Visualization
 
 ### Layout
-- **Left Panel**: Graph visualization (60% width)
-- **Right Panel**: Memory details, entity inspector (40% width)
-- **Bottom Bar**: Quick actions, recent memories
+- **Left Panel**: Graph visualization (full width minus side panel)
+- **Right Panel**: Chat + Graph controls + Memory details
+- **Header**: Graph selector (Knowledge/Context/Combined)
 
-### Graph View Features
-- Force-directed layout (react-force-graph-2d)
-- Node types with distinct colors/shapes
-- Zoom, pan, drag nodes
-- Click to expand details
-- Filter by node type, date
-- Hierarchical clustering option
+### Graph Features
+- **Node labels**: Always visible (entity name inside, type below)
+- **Edge labels**: Always visible (relationship type on the line)
+- **Color coding**:
+  - person: #e91e63
+  - place: #9c27b0
+  - concept: #2196f3
+  - preference: #ff9800
+  - company: #4caf50
+- **Edge color**: Orange (#ff9800)
+- **Interactions**:
+  - Click node → Show details + "Explain with AI" button
+  - Click edge → Show why relationship exists
+  - Drag nodes → Reposition
+  - Zoom/Pan → Navigate graph
 
 ### Real-time Updates
-- WebSocket connection for live graph changes
-- Animated node additions
-- Highlight new connections
+- Graph auto-refreshes every 3 seconds
+- New entities appear immediately
 
-## 7. Tech Stack
+## 8. Tech Stack
 
 ### Backend
 - **Framework**: FastAPI
 - **Graph**: NetworkX
-- **Vector Store**: FAISS (or simple numpy for MVP)
-- **Database**: SQLite (via SQLAlchemy)
-- **Embedding**: sentence-transformers (all-MiniLM-L6-v2)
-- **NLP**: spaCy or regex for entity extraction
+- **Vector Store**: Simple in-memory numpy
+- **Database**: SQLite
+- **LLM**: OpenAI API (GPT-4o for extraction, GPT-3.5-turbo for chat)
 
 ### Frontend
 - **Framework**: React + Vite
 - **Graph**: react-force-graph-2d
 - **State**: Zustand
-- **Styling**: Tailwind CSS
-- **WebSocket**: native WebSocket API
+- **Styling**: Inline CSS (dark theme)
 
-## 8. Data Models
+## 9. Data Models
 
 ### SQLite Schema
 ```sql
@@ -188,7 +193,7 @@ CREATE TABLE entities (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
     entity_type TEXT NOT NULL,
-    properties JSON,
+    properties TEXT,
     created_at TIMESTAMP,
     updated_at TIMESTAMP
 );
@@ -199,7 +204,7 @@ CREATE TABLE relations (
     source_id TEXT REFERENCES entities(id),
     target_id TEXT REFERENCES entities(id),
     relation_type TEXT,
-    properties JSON,
+    properties TEXT,
     confidence REAL DEFAULT 1.0,
     created_at TIMESTAMP
 );
@@ -208,8 +213,8 @@ CREATE TABLE relations (
 CREATE TABLE episodes (
     id TEXT PRIMARY KEY,
     content TEXT NOT NULL,
-    embedding BLOB,
-    metadata JSON,
+    embedding_id TEXT,
+    metadata TEXT,
     created_at TIMESTAMP
 );
 
@@ -220,26 +225,40 @@ CREATE TABLE buffers (
     buffer_type TEXT,
     created_at TIMESTAMP
 );
+
+-- Working Memory
+CREATE TABLE working_memory (
+    id TEXT PRIMARY KEY,
+    content TEXT NOT NULL,
+    role TEXT NOT NULL,
+    created_at TIMESTAMP
+);
 ```
 
-## 9. Implementation Priority
+## 10. How It Works
 
-1. **Phase 1**: Core infrastructure (FastAPI + SQLite + basic memory classes)
-2. **Phase 2**: Knowledge Graph with entity extraction
-3. **Phase 3**: Vector store integration for episodic memory
-4. **Phase 4**: Context Graph for conversation state
-5. **Phase 5**: React frontend with visualization
-6. **Phase 6**: Real-time WebSocket updates
-7. **Phase 7**: Polish and optimizations
+1. **User sends message** in chat
+2. **Agent 1** extracts entities (John, Google, Python)
+3. **Agent 2** proposes relationships (John → works_at → Google, John → likes → Python)
+4. **System checks** if relationships already exist
+5. **Stores** in Knowledge Graph + Context Graph
+6. **LLM responds** using retrieved context
+7. **User sees** entities and relationships in graph
+8. **Click node** → "Explain with AI" for LLM-powered explanation
+9. **Click edge** → See why relationship was created
 
-## 10. Key Design Decisions
+## 11. Key Features
 
-- **Local-first**: All data stored locally (SQLite)
-- **Hybrid storage**: Graph for structured, vectors for unstructured
-- **Entity detection**: Rule-based + embedding similarity for mess detection
-- **No LLM required**: Can work standalone (optional: integrate for entity extraction)
-- **Real-time viz**: WebSocket for live graph updates
+- ✅ AI-powered entity extraction (no manual rules)
+- ✅ Duplicate relationship prevention
+- ✅ Entity explanation with LLM
+- ✅ Edge reasoning visibility
+- ✅ Knowledge Graph + Context Graph views
+- ✅ Reset database functionality
+- ✅ Dark theme visualization
+- ✅ Always-visible labels (no hover required)
+- ✅ Static graph (user controls positioning)
 
 ---
 
-*This spec provides a complete blueprint for building a personal memory graph system with visualization.*
+*This spec reflects the complete implementation of the memory graph system.*
