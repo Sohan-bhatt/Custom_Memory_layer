@@ -15,29 +15,29 @@ class MemoryManager:
         self.procedural_memory = ProceduralMemory()
         self.context_graph = ContextGraph()
     
+    def add_entity_to_context_graph(self, entity_id: str, entity_name: str, entity_type: str, context: str = ""):
+        return self.context_graph.add_entity_node(entity_id, entity_name, entity_type, context)
+    
+    def link_entities_in_context(self, source_entity_id: str, target_entity_id: str, relation_type: str, context: str = ""):
+        self.context_graph.link_entities(source_entity_id, target_entity_id, relation_type, context)
+    
     def process_input(self, content: str, role: str = "user", metadata: Optional[Dict] = None) -> Dict:
         self.working_memory.add(content, role, metadata)
         
-        message_id = self.context_graph.add_message_node(content, role, metadata)
-        
         return {
             "content": content,
-            "layers": ["working", "context_graph"],
-            "message_id": message_id
+            "layers": ["working", "context_graph"]
         }
     
-    def process_context_from_agent(self, topics: List[Dict], intents: List[Dict]):
-        for topic in topics:
-            topic_id = self.context_graph.add_topic_node(
-                topic.get("name", ""),
-                topic.get("confidence", 0.5)
-            )
-        
-        for intent in intents:
-            intent_id = self.context_graph.add_intent_node(
-                intent.get("intent", ""),
-                intent.get("entities", [])
-            )
+    def process_context_from_agent(self, topics: List[Dict], intents: List[Dict], entities: List[Dict] = None):
+        if entities:
+            for entity in entities:
+                self.context_graph.add_entity_node(
+                    entity.get("id", ""),
+                    entity.get("name", ""),
+                    entity.get("entity_type", "concept"),
+                    entity.get("properties", {}).get("source_message", "")[:100]
+                )
     
     def retrieve(self, query: str, memory_types: Optional[List[str]] = None) -> Dict:
         memory_types = memory_types or ["working", "buffer", "episodic", "knowledge_graph", "context_graph"]
@@ -61,9 +61,8 @@ class MemoryManager:
         
         if "context_graph" in memory_types:
             results["context_graph"] = {
-                "messages": self.context_graph.get_recent_messages(5),
-                "topics": self.context_graph.get_topics(),
-                "flow": self.context_graph.get_conversation_flow()
+                "nodes": self.context_graph.get_all_nodes(),
+                "edges": self.context_graph.get_all_edges()
             }
         
         return results
@@ -90,6 +89,18 @@ class MemoryManager:
                 "procedural_count": len(self.procedural_memory.get_all()),
             }
         }
+    
+    def get_entity_for_explanation(self, entity_id: str) -> Optional[Dict]:
+        entity = self.knowledge_graph.get_entity(entity_id)
+        if entity:
+            relations = self.knowledge_graph.get_entity_relations(entity_id)
+            neighbors = self.knowledge_graph.get_neighbors(entity_id)
+            return {
+                "entity": entity,
+                "relations": relations,
+                "neighbors": neighbors
+            }
+        return None
     
     def clear_all(self):
         self.working_memory.clear()

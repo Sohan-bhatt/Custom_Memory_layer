@@ -130,3 +130,68 @@ async def get_neighbors(entity_id: str):
         "success": True,
         "data": neighbors
     }
+
+@graph_router.get("/entity/{entity_id}/explain")
+async def explain_entity(entity_id: str):
+    if not memory_manager:
+        raise HTTPException(status_code=500, detail="Memory manager not initialized")
+    
+    data = memory_manager.get_entity_for_explanation(entity_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Entity not found")
+    
+    entity = data["entity"]
+    relations = data["relations"]
+    neighbors = data["neighbors"]
+    
+    relations_str = ""
+    for r in relations[:5]:
+        source = r.get("source", "")
+        target = r.get("target", "")
+        rel_type = r.get("relation_type", "related")
+        relations_str += f"- {source} --[{rel_type}]--> {target}\n"
+    
+    neighbors_str = ", ".join([n.get("name", "") for n in neighbors[:5]])
+    
+    from openai import OpenAI
+    import os
+    from pathlib import Path
+    
+    app_dir = Path(__file__).resolve().parents[1]
+    backend_dir = app_dir.parent
+    from dotenv import load_dotenv
+    load_dotenv(app_dir / ".env")
+    load_dotenv(backend_dir / ".env")
+    
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    
+    prompt = f"""You are a knowledge graph explainer. Explain what this entity means in the graph.
+
+Entity: {entity.get("name")} (type: {entity.get("entity_type")})
+
+Connected to: {neighbors_str}
+
+Relationships:
+{relations_str}
+
+Provide a clear, concise explanation (2-3 sentences) about who/what this entity is and how it connects to others in the graph."""
+
+    try:
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200
+        )
+        explanation = response.choices[0].message.content
+    except Exception as e:
+        explanation = f"This entity connects to: {neighbors_str}. {str(e)}"
+    
+    return {
+        "success": True,
+        "data": {
+            "entity": entity,
+            "neighbors": neighbors,
+            "relations": relations,
+            "explanation": explanation
+        }
+    }

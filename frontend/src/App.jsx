@@ -33,7 +33,8 @@ function App() {
     activeGraph,
     setActiveGraph,
     getCurrentGraphData,
-    fetchEntityRelations
+    fetchEntityRelations,
+    explainEntity
   } = useStore()
 
   const [input, setInput] = useState('')
@@ -47,6 +48,8 @@ function App() {
   const [linkDetails, setLinkDetails] = useState(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [showDetails, setShowDetails] = useState(true)
+  const [nodeExplanation, setNodeExplanation] = useState(null)
+  const [isExplaining, setIsExplaining] = useState(false)
   const graphRef = useRef()
   const chatEndRef = useRef()
 
@@ -122,12 +125,25 @@ function App() {
     setSelectedNode(node)
     setNodeDetails(node)
     setLinkDetails(null)
+    setNodeExplanation(null)
   }, [])
 
   const handleLinkClick = useCallback((link) => {
     setLinkDetails(link)
     setNodeDetails(null)
+    setNodeExplanation(null)
   }, [])
+
+  const handleExplainEntity = async () => {
+    if (!nodeDetails) return
+    const entityId = nodeDetails.entity_id || nodeDetails.id
+    if (!entityId) return
+    
+    setIsExplaining(true)
+    const result = await explainEntity(entityId)
+    setNodeExplanation(result)
+    setIsExplaining(false)
+  }
 
   const filteredNodes = searchQuery 
     ? graphData.nodes.filter(n => n.name?.toLowerCase().includes(searchQuery.toLowerCase()))
@@ -298,10 +314,6 @@ function App() {
               </div>
               <div style={styles.detailsContent}>
                 <div style={styles.detailRow}>
-                  <span style={styles.detailLabel}>ID:</span>
-                  <span style={styles.detailValue}>{nodeDetails.id?.substring(0, 8)}...</span>
-                </div>
-                <div style={styles.detailRow}>
                   <span style={styles.detailLabel}>Name:</span>
                   <span style={styles.detailValue}>{nodeDetails.name || 'N/A'}</span>
                 </div>
@@ -311,10 +323,31 @@ function App() {
                     {nodeDetails.type || 'unknown'}
                   </span>
                 </div>
-                {nodeDetails.val && (
+                {nodeDetails.context && (
                   <div style={styles.detailRow}>
-                    <span style={styles.detailLabel}>Value:</span>
-                    <span style={styles.detailValue}>{nodeDetails.val}</span>
+                    <span style={styles.detailLabel}>Context:</span>
+                    <span style={styles.detailValue}>{nodeDetails.context}</span>
+                  </div>
+                )}
+                <button 
+                  onClick={handleExplainEntity} 
+                  disabled={isExplaining}
+                  style={styles.explainBtn}
+                >
+                  {isExplaining ? '🤔 Analyzing...' : '🤖 Explain with AI'}
+                </button>
+                {nodeExplanation && (
+                  <div style={styles.explanationBox}>
+                    <div style={styles.detailLabel}>AI Explanation:</div>
+                    <p style={styles.explanationText}>{nodeExplanation.explanation}</p>
+                    {nodeExplanation.neighbors && nodeExplanation.neighbors.length > 0 && (
+                      <div style={styles.neighborsBox}>
+                        <div style={styles.detailLabel}>Connected to:</div>
+                        {nodeExplanation.neighbors.map((n, i) => (
+                          <span key={i} style={styles.neighborTag}>{n.name}</span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -618,6 +651,45 @@ const styles = {
     fontSize: '11px',
     marginTop: '5px',
     lineHeight: '1.4',
+  },
+  explainBtn: {
+    width: '100%',
+    padding: '10px',
+    marginTop: '12px',
+    background: '#2196f3',
+    border: 'none',
+    borderRadius: '6px',
+    color: '#fff',
+    cursor: 'pointer',
+    fontSize: '13px',
+    fontWeight: 'bold',
+  },
+  explanationBox: {
+    marginTop: '15px',
+    padding: '12px',
+    background: '#0f0f1a',
+    borderRadius: '6px',
+    border: '1px solid #2196f3',
+  },
+  explanationText: {
+    color: '#fff',
+    fontSize: '12px',
+    marginTop: '8px',
+    lineHeight: '1.5',
+  },
+  neighborsBox: {
+    marginTop: '10px',
+    paddingTop: '10px',
+    borderTop: '1px solid #333',
+  },
+  neighborTag: {
+    display: 'inline-block',
+    margin: '3px',
+    padding: '3px 8px',
+    background: '#333',
+    borderRadius: '12px',
+    fontSize: '11px',
+    color: '#2196f3',
   },
   sidePanel: {
     width: '400px',

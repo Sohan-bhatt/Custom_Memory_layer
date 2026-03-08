@@ -223,7 +223,45 @@ async def chat_with_memory(user_message: str, memory_manager) -> dict:
     topics = agent4.get("topics", [])
     intents = [{"intent": agent4.get("intent", "statement"), "entities": []}]
     
-    memory_manager.process_context_from_agent(topics, intents)
+    all_entities_after = memory_manager.knowledge_graph.get_all_entities()
+    
+    for e in new_entities_added:
+        e_id = entity_name_to_id.get(e['name'].lower())
+        if e_id:
+            memory_manager.add_entity_to_context_graph(
+                e_id,
+                e['name'],
+                e.get('type', 'concept'),
+                user_message[:100]
+            )
+    
+    for rel in relations_added:
+        from_name = str(rel.get('from') or '').lower().strip()
+        to_name = str(rel.get('to') or '').lower().strip()
+        
+        from_id = entity_name_to_id.get(from_name)
+        to_id = entity_name_to_id.get(to_name)
+        
+        if not from_id:
+            for ent in all_entities_after:
+                if from_name and from_name in _entity_name(ent).lower():
+                    from_id = ent.get('id')
+                    break
+        if not to_id:
+            for ent in all_entities_after:
+                if to_name and to_name in _entity_name(ent).lower():
+                    to_id = ent.get('id')
+                    break
+        
+        if from_id and to_id and from_id != to_id:
+            memory_manager.link_entities_in_context(
+                from_id,
+                to_id,
+                f"conversational_{rel.get('type', 'related')}",
+                f"mentioned in: {user_message[:150]}"
+            )
+    
+    memory_manager.process_context_from_agent(topics, intents, [])
     memory_manager.process_input(user_message, role="user")
     
     context = memory_manager.retrieve(user_message, ["knowledge_graph"])

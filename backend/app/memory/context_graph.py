@@ -6,39 +6,11 @@ import networkx as nx
 class ContextGraph:
     def __init__(self):
         self.graph = nx.DiGraph()
-
-    def add_message_node(self, content: str, role: str = "user", metadata: Optional[Dict] = None) -> str:
-        node_id = str(uuid.uuid4())
-        now = datetime.now().isoformat()
-
-        node_data = {
-            "id": node_id,
-            "name": content[:60] if content else "",
-            "content": content,
-            "role": role,
-            "metadata": metadata or {},
-            "node_type": "message",
-            "created_at": now
-        }
-
-        previous_messages = [
-            (nid, data) for nid, data in self.graph.nodes(data=True)
-            if data.get("node_type") == "message"
-        ]
-        previous_messages.sort(key=lambda item: item[1].get("created_at", ""))
-
-        self.graph.add_node(node_id, **node_data)
-
-        if previous_messages:
-            prev_id = previous_messages[-1][0]
-            self.graph.add_edge(prev_id, node_id, link_type="next", strength=1.0)
-
-        return node_id
     
-    def add_topic_node(self, topic: str, confidence: float = 1.0) -> str:
+    def add_entity_node(self, entity_id: str, entity_name: str, entity_type: str, context: str = "") -> str:
         existing = None
         for node_id, data in self.graph.nodes(data=True):
-            if data.get("node_type") == "topic" and data.get("name", "").lower() == topic.lower():
+            if data.get("entity_id") == entity_id:
                 existing = node_id
                 break
         
@@ -50,9 +22,11 @@ class ContextGraph:
         
         node_data = {
             "id": node_id,
-            "name": topic,
-            "node_type": "topic",
-            "confidence": confidence,
+            "entity_id": entity_id,
+            "name": entity_name,
+            "entity_type": entity_type,
+            "context": context,
+            "node_type": "entity",
             "created_at": now
         }
         
@@ -60,82 +34,85 @@ class ContextGraph:
         
         return node_id
     
-    def add_intent_node(self, intent: str, entities: List[str]) -> str:
-        existing = None
+    def link_entities(self, source_entity_id: str, target_entity_id: str, relation_type: str, context: str = "", confidence: float = 0.8):
+        source_node_id = None
+        target_node_id = None
+        
         for node_id, data in self.graph.nodes(data=True):
-            if data.get("node_type") == "intent" and data.get("intent", "").lower() == intent.lower():
-                existing = node_id
-                break
+            if data.get("entity_id") == source_entity_id:
+                source_node_id = node_id
+            if data.get("entity_id") == target_entity_id:
+                target_node_id = node_id
         
-        if existing:
-            return existing
-        
-        node_id = str(uuid.uuid4())
-        now = datetime.now().isoformat()
-        
-        node_data = {
-            "id": node_id,
-            "intent": intent,
-            "entities": entities,
-            "node_type": "intent",
-            "created_at": now
-        }
-        
-        self.graph.add_node(node_id, **node_data)
-        
-        return node_id
+        if source_node_id and target_node_id and source_node_id != target_node_id:
+            self.graph.add_edge(
+                source_node_id, 
+                target_node_id, 
+                link_type=relation_type,
+                context=context,
+                confidence=confidence,
+                created_at=datetime.now().isoformat()
+            )
     
-    def link_topics(self, topic1_id: str, topic2_id: str):
-        self.graph.add_edge(topic1_id, topic2_id, link_type="related_to", strength=0.5)
+    def get_all_nodes(self) -> List[Dict]:
+        return [dict(data) for _, data in self.graph.nodes(data=True)]
     
-    def get_topics(self) -> List[Dict]:
-        topics = []
-        for node_id, data in self.graph.nodes(data=True):
-            if data.get("node_type") == "topic":
-                topics.append(dict(data))
-        return topics
-    
-    def get_intents(self) -> List[Dict]:
-        intents = []
-        for node_id, data in self.graph.nodes(data=True):
-            if data.get("node_type") == "intent":
-                intents.append(dict(data))
-        return intents
-
-    def get_recent_messages(self, limit: int = 5) -> List[Dict]:
-        messages = [
-            dict(data) for _, data in self.graph.nodes(data=True)
-            if data.get("node_type") == "message"
-        ]
-        messages.sort(key=lambda item: item.get("created_at", ""))
-        return messages[-limit:]
-
-    def get_conversation_flow(self) -> List[Dict]:
-        flow = []
+    def get_all_edges(self) -> List[Dict]:
+        edges = []
         for source, target, data in self.graph.edges(data=True):
-            if data.get("link_type") == "next":
-                flow.append({
-                    "source": source,
-                    "target": target,
-                    "type": "next",
-                    "strength": data.get("strength", 1.0)
-                })
-        return flow
+            edges.append({
+                "source": dict(self.graph.nodes[source]) if source in self.graph.nodes else {},
+                "target": dict(self.graph.nodes[target]) if target in self.graph.nodes else {},
+                "link_type": data.get("link_type", "related"),
+                "context": data.get("context", ""),
+                "confidence": data.get("confidence", 0.5),
+                "created_at": data.get("created_at", "")
+            })
+        return edges
+    
+    def get_node_by_entity_id(self, entity_id: str) -> Optional[Dict]:
+        for node_id, data in self.graph.nodes(data=True):
+            if data.get("entity_id") == entity_id:
+                return dict(data)
+        return None
+    
+    def get_node_relations(self, node_id: str) -> List[Dict]:
+        relations = []
+        
+        for _, target, data in self.graph.out_edges(node_id, data=True):
+            relations.append({
+                "direction": "outgoing",
+                "target": dict(self.graph.nodes[target]) if target in self.graph.nodes else {},
+                "link_type": data.get("link_type", "related"),
+                "context": data.get("context", ""),
+                "confidence": data.get("confidence", 0.5)
+            })
+        
+        for source, _, data in self.graph.in_edges(node_id, data=True):
+            relations.append({
+                "direction": "incoming",
+                "target": dict(self.graph.nodes[source]) if source in self.graph.nodes else {},
+                "link_type": data.get("link_type", "related"),
+                "context": data.get("context", ""),
+                "confidence": data.get("confidence", 0.5)
+            })
+        
+        return relations
     
     def to_visualization_data(self) -> Dict:
         nodes = []
         for node_id, data in self.graph.nodes(data=True):
             node_type = data.get("node_type", "unknown")
             color_map = {
-                "topic": "#f78166",
-                "intent": "#7ee787",
-                "message": "#607d8b"
+                "entity": "#2196f3"
             }
             nodes.append({
                 "id": node_id,
-                "name": data.get("name") or data.get("intent", ""),
-                "type": node_type,
-                "val": 3,
+                "entity_id": data.get("entity_id"),
+                "name": data.get("name", ""),
+                "type": data.get("entity_type", node_type),
+                "context": data.get("context", ""),
+                "val": 15,
                 "color": color_map.get(node_type, "#8b949e")
             })
         
@@ -145,7 +122,8 @@ class ContextGraph:
                 "source": source,
                 "target": target,
                 "type": data.get("link_type", "related"),
-                "strength": data.get("strength", 0.5)
+                "context": data.get("context", ""),
+                "confidence": data.get("confidence", 0.5)
             })
         
         return {"nodes": nodes, "links": links}

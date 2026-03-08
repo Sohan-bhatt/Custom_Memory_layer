@@ -182,4 +182,18 @@ export const useStore = create((set, get) => ({
       return null
     }
   },
+
+  explainEntity: async (entityId) => {
+    try {
+      const res = await fetch(`${API_BASE}/graph/entity/${entityId}/explain`)
+      const data = await res.json()
+      if (data.success) {
+        return data.data
+      }
+      return null
+    } catch (e) {
+      console.error('Failed to explain entity:', e)
+      return null
+    }
+  },
 }))
